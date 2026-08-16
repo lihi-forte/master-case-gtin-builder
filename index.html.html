@@ -1,0 +1,598 @@
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --paper:#F6F5F0;
+    --panel:#FFFFFF;
+    --ink:#1B1B18;
+    --ink-soft:#5B5A54;
+    --rule:#DEDACB;
+    --rule-strong:#C9C4B2;
+    --accent:#E85D2A;
+    --accent-ink:#FFFFFF;
+    --ok:#2F6F4E;
+    --ok-bg:#E9F2EC;
+    --warn:#9A6B00;
+    --warn-bg:#FBF2DE;
+    --error:#AE3A32;
+    --error-bg:#FBEAE7;
+    --step-done:#1B1B18;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;line-height:1.5;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  .app{display:flex;min-height:100vh;}
+
+  /* barcode stripe signature */
+  .stripe{height:10px;width:100%;background:repeating-linear-gradient(90deg,var(--ink) 0 2px,transparent 2px 5px,var(--ink) 5px 6px,transparent 6px 11px,var(--ink) 11px 14px,transparent 14px 17px);opacity:0.85;}
+
+  .rail{width:230px;flex-shrink:0;background:var(--ink);color:#EFEDE4;padding:28px 18px;display:flex;flex-direction:column;gap:2px;}
+  .rail-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;letter-spacing:-0.01em;margin:0 0 4px 2px;}
+  .rail-sub{font-size:11.5px;color:#B8B6AC;margin:0 0 26px 2px;}
+  .step{display:flex;gap:11px;align-items:flex-start;padding:11px 8px;border-radius:6px;cursor:default;}
+  .step.active{background:rgba(232,93,42,0.16);}
+  .step-num{font-family:'IBM Plex Mono',monospace;font-size:12px;width:22px;height:22px;border-radius:50%;border:1px solid #6B6A61;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#B8B6AC;}
+  .step.active .step-num{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .step.done .step-num{background:#EFEDE4;border-color:#EFEDE4;color:var(--ink);}
+  .step-label{font-size:13px;color:#D8D6CB;margin-top:1px;}
+  .step.active .step-label{color:#fff;font-weight:600;}
+  .rail-foot{margin-top:auto;font-size:11px;color:#8C8A80;padding:0 2px;line-height:1.6;}
+
+  .main{flex:1;padding:0;overflow-x:hidden;}
+  .topbar{padding:26px 40px 18px;border-bottom:1px solid var(--rule-strong);background:var(--panel);}
+  .topbar h1{font-family:'Space Grotesk',sans-serif;font-size:22px;margin:0 0 4px;letter-spacing:-0.01em;}
+  .topbar p{margin:0;color:var(--ink-soft);font-size:13px;max-width:560px;}
+  .content{padding:32px 40px 80px;max-width:920px;}
+
+  .panel{background:var(--panel);border:1px solid var(--rule);padding:24px 26px;margin-bottom:22px;}
+  .panel h2{font-family:'Space Grotesk',sans-serif;font-size:15px;margin:0 0 4px;}
+  .panel .desc{color:var(--ink-soft);font-size:12.5px;margin:0 0 18px;}
+
+  .dropzone{border:1.5px dashed var(--rule-strong);padding:34px 20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;}
+  .dropzone:hover, .dropzone.drag{border-color:var(--accent);background:#FDF4EF;}
+  .dropzone .big{font-family:'Space Grotesk',sans-serif;font-size:14px;margin-bottom:6px;}
+  .dropzone .small{color:var(--ink-soft);font-size:12px;}
+  input[type=file]{display:none;}
+
+  .filepill{display:inline-flex;align-items:center;gap:8px;background:#F0EEE5;border:1px solid var(--rule-strong);padding:6px 12px;font-size:12.5px;margin-top:10px;}
+  .filepill .x{cursor:pointer;color:var(--ink-soft);font-weight:600;}
+
+  label.field-label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);margin-bottom:5px;text-transform:uppercase;letter-spacing:.03em;}
+  select, input[type=text], input[type=number]{width:100%;padding:9px 10px;border:1px solid var(--rule-strong);background:#fff;font-family:'Inter',sans-serif;font-size:13.5px;color:var(--ink);}
+  select:focus, input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent);}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;}
+  .field{margin-bottom:14px;}
+  .hint{font-size:11.5px;color:var(--ink-soft);margin-top:5px;}
+
+  button{font-family:'Inter',sans-serif;font-weight:600;font-size:13.5px;border:none;cursor:pointer;padding:11px 20px;}
+  .btn-primary{background:var(--ink);color:#fff;}
+  .btn-primary:hover{background:#000;}
+  .btn-primary:disabled{background:#C9C4B2;cursor:not-allowed;}
+  .btn-accent{background:var(--accent);color:#fff;}
+  .btn-accent:hover{background:#D14E1D;}
+  .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--rule-strong);}
+  .btn-ghost:hover{border-color:var(--ink);}
+  .btn-row{display:flex;gap:10px;margin-top:20px;justify-content:space-between;}
+
+  .readout{display:flex;gap:0;border:1px solid var(--rule-strong);margin-bottom:22px;}
+  .readout-cell{flex:1;padding:16px 20px;border-right:1px solid var(--rule-strong);}
+  .readout-cell:last-child{border-right:none;}
+  .readout-num{font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:600;line-height:1;}
+  .readout-label{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin-top:6px;}
+  .readout-cell.ok .readout-num{color:var(--ok);}
+  .readout-cell.warn .readout-num{color:var(--warn);}
+  .readout-cell.error .readout-num{color:var(--error);}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);padding:8px 10px;border-bottom:1.5px solid var(--ink);background:#FAF9F4;position:sticky;top:0;}
+  td{padding:8px 10px;border-bottom:1px solid var(--rule);vertical-align:top;}
+  tr.row-error td{background:var(--error-bg);}
+  tr.row-warn td{background:var(--warn-bg);}
+  .status-chip{display:inline-block;padding:2px 8px;font-size:10.5px;font-weight:600;border-radius:3px;text-transform:uppercase;letter-spacing:.02em;}
+  .status-chip.ok{background:var(--ok-bg);color:var(--ok);}
+  .status-chip.warn{background:var(--warn-bg);color:var(--warn);}
+  .status-chip.error{background:var(--error-bg);color:var(--error);}
+  .tablewrap{max-height:420px;overflow:auto;border:1px solid var(--rule-strong);}
+  td.editable input{width:70px;padding:4px 6px;font-size:12px;}
+  .msg{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
+  .row-exclude{opacity:0.45;}
+
+  .empty{padding:40px 20px;text-align:center;color:var(--ink-soft);font-size:13px;}
+  .checkline{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:6px;}
+  .badge-saved{font-size:11px;color:var(--ok);margin-left:8px;}
+
+  label.field-label{display:flex;align-items:center;gap:6px;}
+  .help-icon{position:relative;width:15px;height:15px;border-radius:50%;border:1px solid var(--ink-soft);color:var(--ink-soft);font-size:10px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;cursor:help;flex-shrink:0;text-transform:none;letter-spacing:0;}
+  .help-icon:hover, .help-icon:focus{border-color:var(--ink);color:var(--ink);}
+  .help-icon .tooltip{display:none;position:absolute;bottom:135%;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 11px;font-size:11.5px;font-weight:400;text-transform:none;letter-spacing:0;width:230px;line-height:1.45;z-index:20;box-shadow:0 6px 16px rgba(0,0,0,0.18);text-align:left;}
+  .help-icon:hover .tooltip, .help-icon:focus .tooltip{display:block;}
+  .help-icon .tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--ink);}
+</style>
+
+<div class="app">
+  <div class="rail">
+    <div class="rail-title">Master Case Builder</div>
+    <div class="rail-sub">Spreadsheet &rarr; GS1 import file</div>
+    <div id="steps"></div>
+    <div class="rail-foot">Generates GS1 US Data Hub's "Import Higher Levels of Packaging" format. Nothing here talks to GS1 &mdash; you upload the result yourself.</div>
+  </div>
+  <div class="main">
+    <div class="topbar">
+      <h1 id="topbar-title">Step 1 &middot; Upload your spreadsheet</h1>
+      <p id="topbar-desc">Drop in the working file with your product rows &mdash; descriptions, base GTINs, and master case pack sizes.</p>
+    </div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+
+<script>
+const STEP_NAMES = ["Upload","Map Columns","Defaults","Review","Export"];
+const STEP_DESCS = [
+  "Drop in the working file with your product rows — descriptions, base GTINs, and master case pack sizes.",
+  "Tell the tool which column is which. This only has to be set once per file layout.",
+  "Set the values that stay constant across your products — these are remembered next time.",
+  "Check what will be created. Fix, exclude, or edit any row before exporting.",
+  "Download a file formatted for GS1's Batch Import Products upload."
+];
+
+let state = {
+  step: 0,
+  workbook: null,
+  sheetName: null,
+  headers: [],
+  rows: [],
+  mapping: { description:'', eachGtin:'', qty:'', masterGtin:'', sku:'' },
+  defaults: {
+    prefix:'', brand:'', industry:'General', status:'PreMarket',
+    language:'en', isPurchasable:'N', isVariable:'N',
+    stripText:'- Walmart', suffixTemplate:'Master Case ({qty})'
+  },
+  processed: [],
+  fileName: ''
+};
+
+async function loadDefaults(){
+  try{
+    const r = localStorage.getItem('master-case-builder:defaults');
+    if(r){ state.defaults = Object.assign(state.defaults, JSON.parse(r)); }
+  }catch(e){ /* no saved defaults yet */ }
+}
+async function saveDefaults(){
+  try{
+    localStorage.setItem('master-case-builder:defaults', JSON.stringify(state.defaults));
+    return true;
+  }catch(e){ return false; }
+}
+
+function renderSteps(){
+  const el = document.getElementById('steps');
+  el.innerHTML = STEP_NAMES.map((name,i)=>{
+    const cls = i===state.step ? 'active' : (i<state.step ? 'done' : '');
+    const mark = i<state.step ? '\u2713' : (i+1);
+    return `<div class="step ${cls}"><div class="step-num">${mark}</div><div class="step-label">${name}</div></div>`;
+  }).join('');
+  document.getElementById('topbar-title').textContent = `Step ${state.step+1} \u00b7 ${STEP_NAMES[state.step]}`;
+  document.getElementById('topbar-desc').textContent = STEP_DESCS[state.step];
+}
+
+function goTo(step){ state.step = step; render(); }
+
+function render(){
+  renderSteps();
+  const c = document.getElementById('content');
+  if(state.step===0) c.innerHTML = renderUpload();
+  if(state.step===1) c.innerHTML = renderMapping();
+  if(state.step===2) c.innerHTML = renderDefaults();
+  if(state.step===3){ c.innerHTML = renderReview(); }
+  if(state.step===4) c.innerHTML = renderExport();
+  attachHandlers();
+}
+
+/* ---------- STEP 0: UPLOAD ---------- */
+function renderUpload(){
+  return `
+    <div class="panel">
+      <h2>Working spreadsheet</h2>
+      <p class="desc">.xlsx or .csv — the file you already keep with product rows and master case info.</p>
+      <div class="dropzone" id="dropzone">
+        <div class="big">Click to choose a file, or drag it here</div>
+        <div class="small">${state.fileName ? '' : 'No file selected yet'}</div>
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+      ${state.fileName ? `<div class="filepill">${state.fileName}<span class="x" id="clearFile">&times;</span></div>` : ''}
+      ${state.workbook && state.workbook.SheetNames.length>1 ? `
+        <div class="field" style="margin-top:18px;max-width:320px;">
+          <label class="field-label">Sheet / tab</label>
+          <select id="sheetSelect">
+            ${state.workbook.SheetNames.map(n=>`<option value="${n}" ${n===state.sheetName?'selected':''}>${n}</option>`).join('')}
+          </select>
+        </div>` : ''}
+    </div>
+    <div class="btn-row">
+      <div></div>
+      <button class="btn-primary" id="nextBtn" ${state.headers.length? '' : 'disabled'}>Continue &rarr;</button>
+    </div>
+  `;
+}
+
+/* ---------- STEP 1: MAPPING ---------- */
+function fieldLabel(text, help){
+  return `<label class="field-label">${text}<span class="help-icon" tabindex="0">?<span class="tooltip">${help}</span></span></label>`;
+}
+function colOptions(current, includeNone){
+  let opts = includeNone ? [`<option value="">&mdash; none &mdash;</option>`] : [`<option value="">&mdash; select &mdash;</option>`];
+  state.headers.forEach(h=>{
+    opts.push(`<option value="${escapeAttr(h)}" ${h===current?'selected':''}>${escapeHtml(h)}</option>`);
+  });
+  return opts.join('');
+}
+function renderMapping(){
+  const m = state.mapping;
+  return `
+    <div class="panel">
+      <h2>Match your columns</h2>
+      <p class="desc">Which column in <b>${escapeHtml(state.fileName)}</b> holds each piece of information?</p>
+      <div class="grid2">
+        <div class="field">
+          ${fieldLabel('Base ("Each") product description', 'The functional description of the individual sellable unit — not the case. This text gets reused and reformatted (with the Master Case suffix added) to build the case\'s own description.')}
+          <select id="map_description">${colOptions(m.description,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Base GTIN', 'The barcode already assigned to the individual ("Each") product — the single sellable unit. This is the "child" GTIN that goes inside the master case, not the case\'s own GTIN.')}
+          <select id="map_eachGtin">${colOptions(m.eachGtin,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Master case pack quantity', 'How many of the Each-level item are packed into one master case — e.g. 15 units per case. This becomes the "Quantity" and the "(qty)" in the generated description.')}
+          <select id="map_qty">${colOptions(m.qty,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Master case GTIN (output column)', 'The column where a master case GTIN would already be recorded, if one exists. Any row with a value here is treated as already done and skipped.')}
+          <select id="map_masterGtin">${colOptions(m.masterGtin,true)}</select>
+          <div class="hint">Rows where this is already filled in will be skipped. Leave as "none" to process every row.</div>
+        </div>
+        <div class="field">
+          ${fieldLabel('SKU', 'Your own internal product code from your category manager\'s file. It\'s only used to help you identify rows in this tool — it is never sent to GS1, which only deals in GTINs.')}
+          <select id="map_sku">${colOptions(m.sku,true)}</select>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="backBtn">&larr; Back</button>
+      <button class="btn-primary" id="nextBtn" ${(m.description&&m.eachGtin&&m.qty)?'':'disabled'}>Continue &rarr;</button>
+    </div>
+  `;
+}
+
+/* ---------- STEP 2: DEFAULTS ---------- */
+function renderDefaults(){
+  const d = state.defaults;
+  return `
+    <div class="panel">
+      <h2>Constants across your products</h2>
+      <p class="desc">These stay the same for every master case you create, and are remembered on this device for next time.</p>
+      <div class="grid2">
+        <div class="field">
+          ${fieldLabel('GS1 Company Prefix', 'The prefix on your GS1 US membership certificate. It identifies your company inside every GTIN you create, and is the same for all your products.')}
+          <input type="text" id="d_prefix" value="${escapeAttr(d.prefix)}" placeholder="e.g. 0810057">
+        </div>
+        <div class="field">
+          ${fieldLabel('Brand Name', 'Must exactly match the Brand Name already used on your Each-level products in GS1 — spelling and capitalization both need to match, or GS1 will treat it as a different brand.')}
+          <input type="text" id="d_brand" value="${escapeAttr(d.brand)}" placeholder="Must match your Each-level Brand Name exactly">
+        </div>
+        <div class="field">
+          ${fieldLabel('Industry', '"General" means general merchandise; "CPG" means Consumer Packaged Goods. Use whichever classification your Each-level item already has in GS1.')}
+          <select id="d_industry">
+            <option ${d.industry==='General'?'selected':''}>General</option>
+            <option ${d.industry==='CPG'?'selected':''}>CPG</option>
+          </select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Status', '"PreMarket" means still being finalized and not yet visible to trading partners. "In Use" means live and scannable. The Each-level item must already be In Use before its case can be set to In Use.')}
+          <select id="d_status">
+            <option ${d.status==='PreMarket'?'selected':''}>PreMarket</option>
+            <option ${d.status==='In Use'?'selected':''}>In Use</option>
+          </select>
+          <div class="hint">The Each-level item must already be "In Use" before a Case can be set to "In Use".</div>
+        </div>
+        <div class="field">
+          ${fieldLabel('Purchasable by consumer?', 'Whether a shopper could buy this exact unit off a shelf. A shipping/master case is normally "No" — it\'s for moving product through the supply chain, not for sale as-is.')}
+          <select id="d_purchasable">
+            <option value="N" ${d.isPurchasable==='N'?'selected':''}>No &mdash; shipping case</option>
+            <option value="Y" ${d.isPurchasable==='Y'?'selected':''}>Yes</option>
+          </select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Variable measure?', 'Whether this item\'s measure (like weight) varies from unit to unit rather than being fixed — think a random-weight cheese wheel. Almost always "No" for a case of fixed-count products.')}
+          <select id="d_variable">
+            <option value="N" ${d.isVariable==='N'?'selected':''}>No</option>
+            <option value="Y" ${d.isVariable==='Y'?'selected':''}>Yes</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="max-width:100%;margin-top:4px;">
+        ${fieldLabel('Text to strip from the copied description', 'Text trimmed off the end of the copied Each-level description before the case suffix is added — e.g. removing a retailer name like "- Walmart" that only applied to the individual item.')}
+        <input type="text" id="d_strip" value="${escapeAttr(d.stripText)}" placeholder="e.g. - Walmart">
+        <div class="hint">Removed from the end of the base description before the master case suffix is added.</div>
+      </div>
+      <div class="field" style="max-width:100%;">
+        ${fieldLabel('Master case description suffix', 'Appended to the cleaned description to label this as the case-level item, e.g. "Master Case (15)". {qty} is automatically replaced with each row\'s pack quantity.')}
+        <input type="text" id="d_suffix" value="${escapeAttr(d.suffixTemplate)}" placeholder="Master Case ({qty})">
+        <div class="hint">Use <span class="mono">{qty}</span> where the pack quantity should go. Final format: "[cleaned description] - [this suffix]". 200-character limit applies.</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="backBtn">&larr; Back</button>
+      <button class="btn-primary" id="nextBtn">Review rows &rarr;</button>
+    </div>
+  `;
+}
+
+/* ---------- Processing logic ---------- */
+function buildDescription(baseDesc, qty){
+  let d = String(baseDesc || '').trim();
+  const strip = state.defaults.stripText.trim();
+  if(strip && d.endsWith(strip)){
+    d = d.slice(0, d.length - strip.length).trim();
+  }
+  // also handle a dash-joined trailing brand/retailer fragment loosely
+  d = d.replace(/[|\r\n]/g,' ').replace(/\s+/g,' ').trim();
+  const suffix = state.defaults.suffixTemplate.replace('{qty}', qty);
+  return `${d} - ${suffix}`.trim();
+}
+
+function processRows(){
+  const m = state.mapping;
+  const out = [];
+  state.rows.forEach((row, idx)=>{
+    const masterVal = m.masterGtin ? String(row[m.masterGtin]||'').trim() : '';
+    if(masterVal){ return; } // already has a master case GTIN, skip
+
+    const eachGtin = String(row[m.eachGtin]||'').trim();
+    const qtyRaw = row[m.qty];
+    const baseDesc = row[m.description];
+    const sku = m.sku ? row[m.sku] : '';
+
+    const errors = [];
+    const warnings = [];
+
+    if(!eachGtin) errors.push('Missing base (Each) GTIN');
+    else if(!/^\d{8,14}$/.test(eachGtin.replace(/\D/g,''))) warnings.push('Base GTIN has unexpected length/characters');
+
+    let qty = Number(qtyRaw);
+    if(!qtyRaw && qtyRaw !== 0) errors.push('Missing pack quantity');
+    else if(isNaN(qty) || qty<=0) errors.push('Pack quantity is not a positive number');
+
+    if(!baseDesc) errors.push('Missing description');
+
+    let description = '';
+    if(baseDesc && !isNaN(qty)){
+      description = buildDescription(baseDesc, qty);
+      if(description.length>200) errors.push(`Description exceeds 200 characters (${description.length})`);
+    }
+
+    if(!state.defaults.prefix) errors.push('GS1 Company Prefix not set');
+    if(!state.defaults.brand) errors.push('Brand Name not set');
+
+    out.push({
+      idx, sku, baseDesc, eachGtin, qty: qtyRaw, description,
+      status: errors.length ? 'error' : (warnings.length ? 'warn' : 'ok'),
+      errors, warnings, include: true
+    });
+  });
+  state.processed = out;
+}
+
+/* ---------- STEP 3: REVIEW ---------- */
+function renderReview(){
+  processRows();
+  const rows = state.processed;
+  const okCount = rows.filter(r=>r.status==='ok').length;
+  const warnCount = rows.filter(r=>r.status==='warn').length;
+  const errCount = rows.filter(r=>r.status==='error').length;
+
+  if(rows.length===0){
+    return `
+      <div class="panel">
+        <div class="empty">No rows need a master case GTIN &mdash; every row already has a value in your mapped "Master case GTIN" column, or no rows were found. Double check the column mapping in the previous step.</div>
+      </div>
+      <div class="btn-row"><button class="btn-ghost" id="backBtn">&larr; Back</button><div></div></div>
+    `;
+  }
+
+  return `
+    <div class="readout">
+      <div class="readout-cell ok"><div class="readout-num mono">${okCount}</div><div class="readout-label">Ready to export</div></div>
+      <div class="readout-cell warn"><div class="readout-num mono">${warnCount}</div><div class="readout-label">Warnings</div></div>
+      <div class="readout-cell error"><div class="readout-num mono">${errCount}</div><div class="readout-label">Blocked by errors</div></div>
+    </div>
+    <div class="panel" style="padding:0;">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th></th><th>SKU</th><th>Description (as it will be sent)</th><th>Base GTIN</th><th>Qty</th><th>Status</th><th>Notes</th>
+          </tr></thead>
+          <tbody id="reviewBody">
+            ${rows.map((r,i)=>`
+              <tr class="${r.status==='error'?'row-error':(r.status==='warn'?'row-warn':'')} ${r.include?'':'row-exclude'}" data-i="${i}">
+                <td><input type="checkbox" class="inc-check" data-i="${i}" ${r.include?'checked':''}></td>
+                <td class="mono">${escapeHtml(String(r.sku||''))}</td>
+                <td>${escapeHtml(r.description || '(incomplete)')}</td>
+                <td class="mono">${escapeHtml(r.eachGtin||'')}</td>
+                <td class="editable"><input type="number" class="qty-edit" data-i="${i}" value="${escapeAttr(r.qty)}"></td>
+                <td><span class="status-chip ${r.status}">${r.status==='ok'?'OK':r.status==='warn'?'Warning':'Error'}</span></td>
+                <td>${[...r.errors,...r.warnings].map(m=>`<div class="msg">${escapeHtml(m)}</div>`).join('')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="backBtn">&larr; Back</button>
+      <button class="btn-primary" id="nextBtn" ${okCount+warnCount>0?'':'disabled'}>Continue to export &rarr;</button>
+    </div>
+  `;
+}
+
+/* ---------- STEP 4: EXPORT ---------- */
+function renderExport(){
+  const eligible = state.processed.filter(r=>r.include && r.status!=='error');
+  return `
+    <div class="panel">
+      <h2>Export</h2>
+      <p class="desc">This produces a file formatted for GS1 US Data Hub's <b>Batch Import Products &rarr; Import Higher Levels of Packaging</b> upload (Assigned GTINs style). ${eligible.length} row${eligible.length===1?'':'s'} will be included.</p>
+      <div class="hint" style="margin-bottom:16px;">
+        The <span class="mono">GTIN</span> column is left blank in this file. In GS1's portal, use "Batch Import Products" &rarr; download the <b>Assigned GTINs Template</b> for ${eligible.length} product${eligible.length===1?'':'s'} &mdash; GS1 pre-fills that many reserved GTINs for you. Copy this tool's other columns into that downloaded template, in the same row order, then upload it.
+      </div>
+      <button class="btn-accent" id="downloadBtn">Download import file (.xlsx)</button>
+      <div id="downloadMsg" class="hint" style="margin-top:10px;"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn-ghost" id="backBtn">&larr; Back to review</button>
+      <button class="btn-ghost" id="restartBtn">Start a new file</button>
+    </div>
+  `;
+}
+
+function doExport(){
+  const eligible = state.processed.filter(r=>r.include && r.status!=='error');
+  const d = state.defaults;
+  const headerRow = ["Action","GS1CompanyPrefix","GTIN","PackagingLevel","Description","Desc1Language","BrandName","Brand1Language","Status","Industry","IsVariable","IsPurchasable","ChildGTINs","Quantity"];
+  const dataRows = eligible.map(r=>[
+    "Create", d.prefix, "", "Case", r.description, d.language, d.brand, d.language, d.status, d.industry, d.isVariable, d.isPurchasable, r.eachGtin, r.qty
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Master Case Import");
+
+  // validation report sheet (all processed rows, incl. errors, for record keeping)
+  const reportHeader = ["SKU","Description","Base GTIN","Qty","Status","Notes","Included"];
+  const reportRows = state.processed.map(r=>[
+    r.sku||'', r.description||r.baseDesc||'', r.eachGtin, r.qty, r.status, [...r.errors,...r.warnings].join('; '), r.include?'Yes':'No'
+  ]);
+  const ws2 = XLSX.utils.aoa_to_sheet([reportHeader, ...reportRows]);
+  XLSX.utils.book_append_sheet(wb, ws2, "Validation Report");
+
+  XLSX.writeFile(wb, "master_case_import.xlsx");
+}
+
+/* ---------- Handlers ---------- */
+function attachHandlers(){
+  const backBtn = document.getElementById('backBtn');
+  if(backBtn) backBtn.onclick = ()=>goTo(state.step-1);
+  const nextBtn = document.getElementById('nextBtn');
+  if(nextBtn) nextBtn.onclick = ()=>{
+    if(state.step===2){ saveDefaults(); }
+    goTo(state.step+1);
+  };
+  const restartBtn = document.getElementById('restartBtn');
+  if(restartBtn) restartBtn.onclick = ()=>{
+    state.workbook=null; state.headers=[]; state.rows=[]; state.fileName=''; state.processed=[];
+    goTo(0);
+  };
+
+  if(state.step===0){
+    const dz = document.getElementById('dropzone');
+    const fi = document.getElementById('fileInput');
+    dz.onclick = ()=>fi.click();
+    dz.ondragover = e=>{e.preventDefault(); dz.classList.add('drag');};
+    dz.ondragleave = ()=>dz.classList.remove('drag');
+    dz.ondrop = e=>{e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);};
+    fi.onchange = e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); };
+    const clearFile = document.getElementById('clearFile');
+    if(clearFile) clearFile.onclick = (e)=>{ e.stopPropagation(); state.workbook=null; state.headers=[]; state.rows=[]; state.fileName=''; render(); };
+    const sheetSelect = document.getElementById('sheetSelect');
+    if(sheetSelect) sheetSelect.onchange = e=>{ loadSheet(e.target.value); render(); };
+  }
+
+  if(state.step===1){
+    ['description','eachGtin','qty','masterGtin','sku'].forEach(key=>{
+      const el = document.getElementById('map_'+key);
+      if(el) el.onchange = e=>{ state.mapping[key]=e.target.value; render(); };
+    });
+  }
+
+  if(state.step===2){
+    const map = {d_prefix:'prefix',d_brand:'brand',d_industry:'industry',d_status:'status',d_purchasable:'isPurchasable',d_variable:'isVariable',d_strip:'stripText',d_suffix:'suffixTemplate'};
+    Object.keys(map).forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.onchange = e=>{ state.defaults[map[id]] = e.target.value; };
+    });
+  }
+
+  if(state.step===3){
+    document.querySelectorAll('.inc-check').forEach(cb=>{
+      cb.onchange = e=>{
+        const i = Number(e.target.dataset.i);
+        state.processed[i].include = e.target.checked;
+        const tr = document.querySelector(`tr[data-i="${i}"]`);
+        if(tr) tr.classList.toggle('row-exclude', !e.target.checked);
+      };
+    });
+    document.querySelectorAll('.qty-edit').forEach(inp=>{
+      inp.onchange = e=>{
+        const i = Number(e.target.dataset.i);
+        const newQty = Number(e.target.value);
+        const r = state.processed[i];
+        r.qty = newQty;
+        r.description = buildDescription(r.baseDesc, newQty);
+        r.errors = r.errors.filter(m=>!m.includes('quantity') && !m.includes('Description exceeds'));
+        if(isNaN(newQty)||newQty<=0) r.errors.push('Pack quantity is not a positive number');
+        if(r.description.length>200) r.errors.push(`Description exceeds 200 characters (${r.description.length})`);
+        r.status = r.errors.length ? 'error' : (r.warnings.length ? 'warn' : 'ok');
+        render();
+      };
+    });
+  }
+
+  if(state.step===4){
+    const dl = document.getElementById('downloadBtn');
+    if(dl) dl.onclick = ()=>{
+      doExport();
+      document.getElementById('downloadMsg').textContent = 'Downloaded master_case_import.xlsx';
+    };
+  }
+}
+
+function handleFile(file){
+  state.fileName = file.name;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    const data = new Uint8Array(e.target.result);
+    const wb = XLSX.read(data, {type:'array'});
+    state.workbook = wb;
+    loadSheet(wb.SheetNames[0]);
+    render();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function loadSheet(name){
+  state.sheetName = name;
+  const ws = state.workbook.Sheets[name];
+  const json = XLSX.utils.sheet_to_json(ws, {defval:''});
+  state.rows = json;
+  state.headers = json.length ? Object.keys(json[0]) : [];
+  // try to auto-guess mapping by header keywords
+  const guess = (keywords)=>{
+    const h = state.headers.find(h=> keywords.some(k=>h.toLowerCase().includes(k)));
+    return h || '';
+  };
+  state.mapping.description = state.mapping.description || guess(['description','desc']);
+  state.mapping.eachGtin = state.mapping.eachGtin || guess(['each gtin','base gtin','pdq gtin','gtin']);
+  state.mapping.qty = state.mapping.qty || guess(['master case configuration','pack size','pack qty','quantity','qty']);
+  state.mapping.masterGtin = state.mapping.masterGtin || guess(['master case gtin']);
+  state.mapping.sku = state.mapping.sku || guess(['sku']);
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+(async function init(){
+  await loadDefaults();
+  render();
+})();
+</script>
