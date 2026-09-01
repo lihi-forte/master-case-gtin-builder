@@ -148,7 +148,7 @@ let state = {
   defaults: {
     prefix:'', brand:'', industry:'General', status:'PreMarket',
     language:'en', isPurchasable:'N', isVariable:'N',
-    stripText:'- Walmart', suffixTemplate:'Master Case ({qty})'
+    stripPrefixText:'*New Branding*', stripText:'- Walmart', suffixTemplate:'Master Case ({qty})'
   },
   processed: [],
   fileName: ''
@@ -156,13 +156,13 @@ let state = {
 
 async function loadDefaults(){
   try{
-    const r = localStorage.getItem('master-case-builder:defaults');
-    if(r){ state.defaults = Object.assign(state.defaults, JSON.parse(r)); }
-  }catch(e){ /* no saved defaults yet */ }
+    const r = await window.storage.get('master-case-builder:defaults');
+    if(r && r.value){ state.defaults = Object.assign(state.defaults, JSON.parse(r.value)); }
+  }catch(e){ /* no saved defaults yet, fine */ }
 }
 async function saveDefaults(){
   try{
-    localStorage.setItem('master-case-builder:defaults', JSON.stringify(state.defaults));
+    await window.storage.set('master-case-builder:defaults', JSON.stringify(state.defaults));
     return true;
   }catch(e){ return false; }
 }
@@ -313,7 +313,12 @@ function renderDefaults(){
         </div>
       </div>
       <div class="field" style="max-width:100%;margin-top:4px;">
-        ${fieldLabel('Text to strip from the copied description', 'Text trimmed off the end of the copied Each-level description before the case suffix is added — e.g. removing a retailer name like "- Walmart" that only applied to the individual item.')}
+        ${fieldLabel('Text to strip from the start of the copied description', 'Text trimmed off the beginning of the copied Each-level description before the case suffix is added — e.g. removing a "*New Branding*" tag that only needs to appear once, not duplicated onto the case description.')}
+        <input type="text" id="d_stripPrefix" value="${escapeAttr(d.stripPrefixText)}" placeholder="e.g. *New Branding*">
+        <div class="hint">Removed from the start of the base description, before the end-text strip and suffix are applied.</div>
+      </div>
+      <div class="field" style="max-width:100%;margin-top:4px;">
+        ${fieldLabel('Text to strip from the end of the copied description', 'Text trimmed off the end of the copied Each-level description before the case suffix is added — e.g. removing a retailer name like "- Walmart" that only applied to the individual item.')}
         <input type="text" id="d_strip" value="${escapeAttr(d.stripText)}" placeholder="e.g. - Walmart">
         <div class="hint">Removed from the end of the base description before the master case suffix is added.</div>
       </div>
@@ -333,6 +338,10 @@ function renderDefaults(){
 /* ---------- Processing logic ---------- */
 function buildDescription(baseDesc, qty){
   let d = String(baseDesc || '').trim();
+  const stripPrefix = (state.defaults.stripPrefixText || '').trim();
+  if(stripPrefix && d.startsWith(stripPrefix)){
+    d = d.slice(stripPrefix.length).trim();
+  }
   const strip = state.defaults.stripText.trim();
   if(strip && d.endsWith(strip)){
     d = d.slice(0, d.length - strip.length).trim();
@@ -447,6 +456,9 @@ function renderExport(){
       <div class="hint" style="margin-bottom:16px;">
         The <span class="mono">GTIN</span> column is left blank in this file. In GS1's portal, use "Batch Import Products" &rarr; download the <b>Assigned GTINs Template</b> for ${eligible.length} product${eligible.length===1?'':'s'} &mdash; GS1 pre-fills that many reserved GTINs for you. Copy this tool's other columns into that downloaded template, in the same row order, then upload it.
       </div>
+      <div class="hint" style="margin-bottom:16px;">
+        <span class="mono">ChildGTINs</span> are written as 14-digit GTIN-14 values (padded with leading zeros if your source GTIN was 12 or 13 digits) &mdash; this is the format GS1's ChildGTINs field expects.
+      </div>
       <button class="btn-accent" id="downloadBtn">Download import file (.xlsx)</button>
       <div id="downloadMsg" class="hint" style="margin-top:10px;"></div>
     </div>
@@ -457,14 +469,26 @@ function renderExport(){
   `;
 }
 
+function toGtin14(raw){
+  const digits = String(raw||'').replace(/\D/g,'');
+  if(digits.length >= 14) return digits; // already 14 (or longer/unexpected — leave as-is)
+  return digits.padStart(14, '0');
+}
+
 function doExport(){
   const eligible = state.processed.filter(r=>r.include && r.status!=='error');
   const d = state.defaults;
   const headerRow = ["Action","GS1CompanyPrefix","GTIN","PackagingLevel","Description","Desc1Language","BrandName","Brand1Language","Status","Industry","IsVariable","IsPurchasable","ChildGTINs","Quantity"];
   const dataRows = eligible.map(r=>[
-    "Create", d.prefix, "", "Case", r.description, d.language, d.brand, d.language, d.status, d.industry, d.isVariable, d.isPurchasable, r.eachGtin, r.qty
+    "Create", d.prefix, "", "Case", r.description, d.language, d.brand, d.language, d.status, d.industry, d.isVariable, d.isPurchasable, toGtin14(r.eachGtin), r.qty
   ]);
   const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+  // force ChildGTINs (col M) to text so leading zeros / 14-digit values survive in Excel
+  const childGtinCol = headerRow.indexOf("ChildGTINs");
+  for(let r = 1; r <= dataRows.length; r++){
+    const addr = XLSX.utils.encode_cell({r, c: childGtinCol});
+    if(ws[addr]){ ws[addr].t = 's'; ws[addr].z = '@'; }
+  }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Master Case Import");
 
@@ -516,7 +540,7 @@ function attachHandlers(){
   }
 
   if(state.step===2){
-    const map = {d_prefix:'prefix',d_brand:'brand',d_industry:'industry',d_status:'status',d_purchasable:'isPurchasable',d_variable:'isVariable',d_strip:'stripText',d_suffix:'suffixTemplate'};
+    const map = {d_prefix:'prefix',d_brand:'brand',d_industry:'industry',d_status:'status',d_purchasable:'isPurchasable',d_variable:'isVariable',d_stripPrefix:'stripPrefixText',d_strip:'stripText',d_suffix:'suffixTemplate'};
     Object.keys(map).forEach(id=>{
       const el = document.getElementById(id);
       if(el) el.onchange = e=>{ state.defaults[map[id]] = e.target.value; };
