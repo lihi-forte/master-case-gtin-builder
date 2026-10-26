@@ -110,19 +110,31 @@
   .help-icon .tooltip{display:none;position:absolute;bottom:135%;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:9px 11px;font-size:11.5px;font-weight:400;text-transform:none;letter-spacing:0;width:230px;line-height:1.45;z-index:20;box-shadow:0 6px 16px rgba(0,0,0,0.18);text-align:left;}
   .help-icon:hover .tooltip, .help-icon:focus .tooltip{display:block;}
   .help-icon .tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--ink);}
+
+  .modes{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .mode-card{border:1.5px solid var(--rule-strong);padding:16px 18px;cursor:pointer;background:#fff;transition:border-color .15s,background .15s;}
+  .mode-card:hover{border-color:var(--ink);}
+  .mode-card.sel{border-color:var(--accent);background:#FDF4EF;}
+  .mode-card .mt{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:8px;}
+  .mode-card .md{font-size:12px;color:var(--ink-soft);}
+  .mode-card .tag{font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--ink);color:#fff;padding:1px 6px;}
+  .subhead{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;margin:18px 0 10px;padding-top:14px;border-top:1px solid var(--rule);}
+  .note{background:#F0EEE5;border-left:3px solid var(--accent);padding:10px 14px;font-size:12.5px;margin-bottom:16px;}
+  .lvl{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);display:block;}
+  @media (max-width:760px){.app{flex-direction:column}.rail{width:100%}.grid2,.modes{grid-template-columns:1fr}.content,.topbar{padding-left:16px;padding-right:16px}.readout{flex-wrap:wrap}}
 </style>
 
 <div class="app">
   <div class="rail">
-    <div class="rail-title">Master Case Builder</div>
-    <div class="rail-sub">Spreadsheet &rarr; GS1 import file</div>
+    <div class="rail-title">Case GTIN Builder</div>
+    <div class="rail-sub" id="rail-sub">Spreadsheet &rarr; GS1 import file</div>
     <div id="steps"></div>
-    <div class="rail-foot">Generates GS1 US Data Hub's "Import Higher Levels of Packaging" format. Nothing here talks to GS1 &mdash; you upload the result yourself.</div>
+    <div class="rail-foot">Generates GS1 US Data Hub's "Import Higher Levels of Packaging" format. Nothing here talks to GS1 &mdash; you upload the result yourself.<br><br>Inner + master files: run <b>Inner Case</b> first, add the new inner GTINs to your file, then run <b>Master Case</b>.</div>
   </div>
   <div class="main">
     <div class="topbar">
       <h1 id="topbar-title">Step 1 &middot; Upload your spreadsheet</h1>
-      <p id="topbar-desc">Drop in the working file with your product rows &mdash; descriptions, base GTINs, and master case pack sizes.</p>
+      <p id="topbar-desc"></p>
     </div>
     <div class="content" id="content"></div>
   </div>
@@ -130,55 +142,72 @@
 
 <script>
 const STEP_NAMES = ["Upload","Map Columns","Defaults","Review","Export"];
-const STEP_DESCS = [
-  "Drop in the working file with your product rows — descriptions, base GTINs, and master case pack sizes.",
-  "Tell the tool which column is which. This only has to be set once per file layout.",
-  "Set the values that stay constant across your products — these are remembered next time.",
-  "Check what will be created. Fix, exclude, or edit any row before exporting.",
-  "Download a file formatted for GS1's Batch Import Products upload."
-];
+const STEP_DESCS = {
+  master: [
+    "Choose what you're creating, then drop in the working file with your product rows.",
+    "Tell the tool which column is which. If your file has inner cases (PDQs), map those columns too so the master case points at the inner case.",
+    "Set the values that stay constant across your products — these are remembered next time.",
+    "Check what will be created. Fix, exclude, or edit any row before exporting.",
+    "Download a file formatted for GS1's Batch Import Products upload."
+  ],
+  inner: [
+    "Choose what you're creating, then drop in the working file with your product rows.",
+    "Tell the tool which column is which — base GTIN, inner case (PDQ) pack size, and where inner GTINs get recorded.",
+    "Set the values that stay constant across your products — these are remembered next time.",
+    "Check which inner cases will be created. Fix, exclude, or edit any row before exporting.",
+    "Download the inner case file for GS1. Once GS1 assigns the GTINs, add them to your file and run Master Case mode."
+  ]
+};
+const MODE_LABEL = { master:'Master Case', inner:'Inner Case' };
 
 let state = {
   step: 0,
+  mode: 'master',
   workbook: null,
   sheetName: null,
   headers: [],
   rows: [],
-  mapping: { description:'', eachGtin:'', qty:'', masterGtin:'', sku:'' },
+  mapping: { description:'', eachGtin:'', sku:'', masterQty:'', masterGtin:'', innerQty:'', innerGtin:'' },
   defaults: {
     prefix:'', brand:'', industry:'General', status:'PreMarket',
     language:'en', isPurchasable:'N', isVariable:'N',
-    stripPrefixText:'*New Branding*', stripText:'- Walmart', suffixTemplate:'Master Case ({qty})'
+    stripPrefixText:'*New Branding*', stripText:'- Walmart',
+    suffixTemplate:'Master Case ({qty})',
+    innerSuffixTemplate:'Inner Pack ({qty})',
+    innerLevel:'Inner Pack',
+    masterQtyUnit:'eaches'
   },
   processed: [],
   fileName: ''
 };
 
+/* ---------- persistence (artifact storage, falls back to localStorage) ---------- */
+const STORE_KEY = 'master-case-builder:defaults';
 async function loadDefaults(){
-  try{
-    const r = await window.storage.get('master-case-builder:defaults');
-    if(r && r.value){ state.defaults = Object.assign(state.defaults, JSON.parse(r.value)); }
-  }catch(e){ /* no saved defaults yet, fine */ }
+  let raw = null;
+  try{ if(window.storage){ const r = await window.storage.get(STORE_KEY); if(r && r.value) raw = r.value; } }catch(e){}
+  if(!raw){ try{ raw = localStorage.getItem(STORE_KEY); }catch(e){} }
+  if(raw){ try{ state.defaults = Object.assign(state.defaults, JSON.parse(raw)); }catch(e){} }
 }
 async function saveDefaults(){
-  try{
-    await window.storage.set('master-case-builder:defaults', JSON.stringify(state.defaults));
-    return true;
-  }catch(e){ return false; }
+  const v = JSON.stringify(state.defaults);
+  try{ if(window.storage) await window.storage.set(STORE_KEY, v); }catch(e){}
+  try{ localStorage.setItem(STORE_KEY, v); }catch(e){}
 }
 
 function renderSteps(){
   const el = document.getElementById('steps');
   el.innerHTML = STEP_NAMES.map((name,i)=>{
     const cls = i===state.step ? 'active' : (i<state.step ? 'done' : '');
-    const mark = i<state.step ? '\u2713' : (i+1);
+    const mark = i<state.step ? '✓' : (i+1);
     return `<div class="step ${cls}"><div class="step-num">${mark}</div><div class="step-label">${name}</div></div>`;
   }).join('');
-  document.getElementById('topbar-title').textContent = `Step ${state.step+1} \u00b7 ${STEP_NAMES[state.step]}`;
-  document.getElementById('topbar-desc').textContent = STEP_DESCS[state.step];
+  document.getElementById('rail-sub').textContent = `${MODE_LABEL[state.mode]} mode · Spreadsheet → GS1`;
+  document.getElementById('topbar-title').textContent = `Step ${state.step+1} · ${STEP_NAMES[state.step]}`;
+  document.getElementById('topbar-desc').textContent = STEP_DESCS[state.mode][state.step];
 }
 
-function goTo(step){ state.step = step; render(); }
+function goTo(step){ state.step = step; render(); window.scrollTo(0,0); }
 
 function render(){
   renderSteps();
@@ -186,28 +215,42 @@ function render(){
   if(state.step===0) c.innerHTML = renderUpload();
   if(state.step===1) c.innerHTML = renderMapping();
   if(state.step===2) c.innerHTML = renderDefaults();
-  if(state.step===3){ c.innerHTML = renderReview(); }
+  if(state.step===3) c.innerHTML = renderReview();
   if(state.step===4) c.innerHTML = renderExport();
   attachHandlers();
 }
 
-/* ---------- STEP 0: UPLOAD ---------- */
+/* ---------- STEP 0: MODE + UPLOAD ---------- */
 function renderUpload(){
   return `
     <div class="panel">
+      <h2>What are you creating?</h2>
+      <p class="desc">If your file has both inner cases (PDQs) and master cases, create the inner cases first. The master case has to point at the inner case's GTIN, and GS1 only assigns that GTIN once the inner case is created.</p>
+      <div class="modes">
+        <div class="mode-card ${state.mode==='inner'?'sel':''}" data-mode="inner">
+          <div class="mt"><span class="tag">1</span>Inner Case / PDQ</div>
+          <div class="md">Each &rarr; Inner case. Child = base (Each) GTIN, quantity = inner pack size.</div>
+        </div>
+        <div class="mode-card ${state.mode==='master'?'sel':''}" data-mode="master">
+          <div class="mt"><span class="tag">2</span>Master Case</div>
+          <div class="md">Each &rarr; Master case, or Inner case &rarr; Master case when the row has an inner GTIN.</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
       <h2>Working spreadsheet</h2>
-      <p class="desc">.xlsx or .csv — the file you already keep with product rows and master case info.</p>
+      <p class="desc">.xlsx or .csv &mdash; the file you already keep with product rows and case info.</p>
       <div class="dropzone" id="dropzone">
         <div class="big">Click to choose a file, or drag it here</div>
         <div class="small">${state.fileName ? '' : 'No file selected yet'}</div>
       </div>
       <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
-      ${state.fileName ? `<div class="filepill">${state.fileName}<span class="x" id="clearFile">&times;</span></div>` : ''}
+      ${state.fileName ? `<div class="filepill">${escapeHtml(state.fileName)}<span class="x" id="clearFile">&times;</span></div>` : ''}
       ${state.workbook && state.workbook.SheetNames.length>1 ? `
         <div class="field" style="margin-top:18px;max-width:320px;">
           <label class="field-label">Sheet / tab</label>
           <select id="sheetSelect">
-            ${state.workbook.SheetNames.map(n=>`<option value="${n}" ${n===state.sheetName?'selected':''}>${n}</option>`).join('')}
+            ${state.workbook.SheetNames.map(n=>`<option value="${escapeAttr(n)}" ${n===state.sheetName?'selected':''}>${escapeHtml(n)}</option>`).join('')}
           </select>
         </div>` : ''}
     </div>
@@ -229,39 +272,92 @@ function colOptions(current, includeNone){
   });
   return opts.join('');
 }
+function mappingComplete(){
+  const m = state.mapping;
+  if(!(m.description && m.eachGtin)) return false;
+  if(state.mode==='inner') return !!m.innerQty;
+  if(!m.masterQty) return false;
+  if(m.innerGtin && state.defaults.masterQtyUnit==='eaches' && !m.innerQty) return false;
+  return true;
+}
 function renderMapping(){
   const m = state.mapping;
+  const common = `
+        <div class="field">
+          ${fieldLabel('Base ("Each") product description', 'The functional description of the individual sellable unit. This text gets reused and reformatted (with the case suffix added) to build the case\'s own description.')}
+          <select id="map_description">${colOptions(m.description,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Base GTIN', 'The barcode already assigned to the individual ("Each") product &mdash; the single sellable unit, e.g. the UPC column.')}
+          <select id="map_eachGtin">${colOptions(m.eachGtin,false)}</select>
+        </div>`;
+  const skuField = `
+        <div class="field">
+          ${fieldLabel('SKU', 'Your own internal product code. Only used to help you identify rows in this tool &mdash; never sent to GS1.')}
+          <select id="map_sku">${colOptions(m.sku,true)}</select>
+        </div>`;
+
+  let body;
+  if(state.mode==='inner'){
+    body = `
+      <div class="grid2">
+        ${common}
+        <div class="field">
+          ${fieldLabel('Inner case pack quantity', 'How many Each-level units go into one inner case / PDQ, e.g. "pdq configuration". Becomes the GS1 Quantity and the {qty} in the description.')}
+          <select id="map_innerQty">${colOptions(m.innerQty,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Inner case GTIN (output column)', 'The column where the inner case / PDQ GTIN is recorded once it exists. Rows with a value here are treated as already done and skipped.')}
+          <select id="map_innerGtin">${colOptions(m.innerGtin,true)}</select>
+          <div class="hint">Rows where this is already filled in will be skipped.</div>
+        </div>
+        ${skuField}
+      </div>`;
+  } else {
+    const unit = state.defaults.masterQtyUnit;
+    body = `
+      <div class="grid2">
+        ${common}
+        <div class="field">
+          ${fieldLabel('Master case pack quantity', 'How many units are in one master case, e.g. "master case configuration". Used in the description\'s {qty}.')}
+          <select id="map_masterQty">${colOptions(m.masterQty,false)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Master case GTIN (output column)', 'Where a master case GTIN would already be recorded. Any row with a value here is treated as already done and skipped.')}
+          <select id="map_masterGtin">${colOptions(m.masterGtin,true)}</select>
+          <div class="hint">Rows where this is already filled in will be skipped.</div>
+        </div>
+        ${skuField}
+      </div>
+      <div class="subhead">Inner cases (optional)</div>
+      <p class="desc" style="margin-top:-4px;">Map these if the file also has inner cases / PDQs. Rows that have an inner GTIN get the <b>inner case</b> as the master case's child. Rows with no inner case still use the base GTIN.</p>
+      <div class="grid2">
+        <div class="field">
+          ${fieldLabel('Inner case GTIN', 'The inner case / PDQ GTIN that GS1 assigned when you ran Inner Case mode. It becomes the master case\'s ChildGTIN.')}
+          <select id="map_innerGtin">${colOptions(m.innerGtin,true)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Inner case pack quantity', 'Eaches per inner case, e.g. "pdq configuration". Used to work out how many inner cases are in a master case.')}
+          <select id="map_innerQty">${colOptions(m.innerQty,true)}</select>
+        </div>
+        <div class="field">
+          ${fieldLabel('Master case quantity is counted in', 'GS1 Quantity must be the number of inner cases in the master case. If your master case column counts eaches (e.g. 40 eaches with a 20-each PDQ), the tool divides: 40 &divide; 20 = 2.')}
+          <select id="d_masterQtyUnit">
+            <option value="eaches" ${unit==='eaches'?'selected':''}>Eaches (tool divides by inner pack size)</option>
+            <option value="inners" ${unit==='inners'?'selected':''}>Inner cases (use as-is)</option>
+          </select>
+        </div>
+      </div>`;
+  }
   return `
     <div class="panel">
       <h2>Match your columns</h2>
       <p class="desc">Which column in <b>${escapeHtml(state.fileName)}</b> holds each piece of information?</p>
-      <div class="grid2">
-        <div class="field">
-          ${fieldLabel('Base ("Each") product description', 'The functional description of the individual sellable unit — not the case. This text gets reused and reformatted (with the Master Case suffix added) to build the case\'s own description.')}
-          <select id="map_description">${colOptions(m.description,false)}</select>
-        </div>
-        <div class="field">
-          ${fieldLabel('Base GTIN', 'The barcode already assigned to the individual ("Each") product — the single sellable unit. This is the "child" GTIN that goes inside the master case, not the case\'s own GTIN.')}
-          <select id="map_eachGtin">${colOptions(m.eachGtin,false)}</select>
-        </div>
-        <div class="field">
-          ${fieldLabel('Master case pack quantity', 'How many of the Each-level item are packed into one master case — e.g. 15 units per case. This becomes the "Quantity" and the "(qty)" in the generated description.')}
-          <select id="map_qty">${colOptions(m.qty,false)}</select>
-        </div>
-        <div class="field">
-          ${fieldLabel('Master case GTIN (output column)', 'The column where a master case GTIN would already be recorded, if one exists. Any row with a value here is treated as already done and skipped.')}
-          <select id="map_masterGtin">${colOptions(m.masterGtin,true)}</select>
-          <div class="hint">Rows where this is already filled in will be skipped. Leave as "none" to process every row.</div>
-        </div>
-        <div class="field">
-          ${fieldLabel('SKU', 'Your own internal product code from your category manager\'s file. It\'s only used to help you identify rows in this tool — it is never sent to GS1, which only deals in GTINs.')}
-          <select id="map_sku">${colOptions(m.sku,true)}</select>
-        </div>
-      </div>
+      ${body}
     </div>
     <div class="btn-row">
       <button class="btn-ghost" id="backBtn">&larr; Back</button>
-      <button class="btn-primary" id="nextBtn" ${(m.description&&m.eachGtin&&m.qty)?'':'disabled'}>Continue &rarr;</button>
+      <button class="btn-primary" id="nextBtn" ${mappingComplete()?'':'disabled'}>Continue &rarr;</button>
     </div>
   `;
 }
@@ -269,62 +365,72 @@ function renderMapping(){
 /* ---------- STEP 2: DEFAULTS ---------- */
 function renderDefaults(){
   const d = state.defaults;
+  const isInner = state.mode==='inner';
   return `
     <div class="panel">
       <h2>Constants across your products</h2>
-      <p class="desc">These stay the same for every master case you create, and are remembered on this device for next time.</p>
+      <p class="desc">These stay the same for every case you create, and are remembered on this device for next time.</p>
       <div class="grid2">
         <div class="field">
-          ${fieldLabel('GS1 Company Prefix', 'The prefix on your GS1 US membership certificate. It identifies your company inside every GTIN you create, and is the same for all your products.')}
+          ${fieldLabel('GS1 Company Prefix', 'The prefix on your GS1 US membership certificate.')}
           <input type="text" id="d_prefix" value="${escapeAttr(d.prefix)}" placeholder="e.g. 0810057">
         </div>
         <div class="field">
-          ${fieldLabel('Brand Name', 'Must exactly match the Brand Name already used on your Each-level products in GS1 — spelling and capitalization both need to match, or GS1 will treat it as a different brand.')}
+          ${fieldLabel('Brand Name', 'Must exactly match the Brand Name already used on your Each-level products in GS1.')}
           <input type="text" id="d_brand" value="${escapeAttr(d.brand)}" placeholder="Must match your Each-level Brand Name exactly">
         </div>
         <div class="field">
-          ${fieldLabel('Industry', '"General" means general merchandise; "CPG" means Consumer Packaged Goods. Use whichever classification your Each-level item already has in GS1.')}
+          ${fieldLabel('Industry', '"General" means general merchandise; "CPG" means Consumer Packaged Goods. Use whatever your Each-level item has.')}
           <select id="d_industry">
             <option ${d.industry==='General'?'selected':''}>General</option>
             <option ${d.industry==='CPG'?'selected':''}>CPG</option>
           </select>
         </div>
         <div class="field">
-          ${fieldLabel('Status', '"PreMarket" means still being finalized and not yet visible to trading partners. "In Use" means live and scannable. The Each-level item must already be In Use before its case can be set to In Use.')}
+          ${fieldLabel('Status', '"PreMarket" = still being finalized. "In Use" = live. A child item must already be In Use before its parent can be set to In Use.')}
           <select id="d_status">
             <option ${d.status==='PreMarket'?'selected':''}>PreMarket</option>
             <option ${d.status==='In Use'?'selected':''}>In Use</option>
           </select>
-          <div class="hint">The Each-level item must already be "In Use" before a Case can be set to "In Use".</div>
+          <div class="hint">The child item must already be "In Use" before this level can be set to "In Use".</div>
         </div>
         <div class="field">
-          ${fieldLabel('Purchasable by consumer?', 'Whether a shopper could buy this exact unit off a shelf. A shipping/master case is normally "No" — it\'s for moving product through the supply chain, not for sale as-is.')}
+          ${fieldLabel('Purchasable by consumer?', 'Whether a shopper could buy this exact unit off a shelf. Shipping cases and PDQ trays are normally "No".')}
           <select id="d_purchasable">
-            <option value="N" ${d.isPurchasable==='N'?'selected':''}>No &mdash; shipping case</option>
+            <option value="N" ${d.isPurchasable==='N'?'selected':''}>No &mdash; shipping / display case</option>
             <option value="Y" ${d.isPurchasable==='Y'?'selected':''}>Yes</option>
           </select>
         </div>
         <div class="field">
-          ${fieldLabel('Variable measure?', 'Whether this item\'s measure (like weight) varies from unit to unit rather than being fixed — think a random-weight cheese wheel. Almost always "No" for a case of fixed-count products.')}
+          ${fieldLabel('Variable measure?', 'Whether the measure (like weight) varies unit to unit. Almost always "No".')}
           <select id="d_variable">
             <option value="N" ${d.isVariable==='N'?'selected':''}>No</option>
             <option value="Y" ${d.isVariable==='Y'?'selected':''}>Yes</option>
           </select>
         </div>
+        ${isInner ? `
+        <div class="field">
+          ${fieldLabel('Inner case packaging level', 'The GS1 PackagingLevel written for these rows. "Inner Pack" is the standard level between Each and Case. Use "Display/Shipper" only if GS1 should treat the PDQ as a display unit.')}
+          <select id="d_innerLevel">
+            <option ${d.innerLevel==='Inner Pack'?'selected':''}>Inner Pack</option>
+            <option ${d.innerLevel==='Display/Shipper'?'selected':''}>Display/Shipper</option>
+          </select>
+        </div>` : ''}
       </div>
       <div class="field" style="max-width:100%;margin-top:4px;">
-        ${fieldLabel('Text to strip from the start of the copied description', 'Text trimmed off the beginning of the copied Each-level description before the case suffix is added — e.g. removing a "*New Branding*" tag that only needs to appear once, not duplicated onto the case description.')}
+        ${fieldLabel('Text to strip from the start of the copied description', 'Trimmed off the beginning of the copied Each-level description before the case suffix is added.')}
         <input type="text" id="d_stripPrefix" value="${escapeAttr(d.stripPrefixText)}" placeholder="e.g. *New Branding*">
-        <div class="hint">Removed from the start of the base description, before the end-text strip and suffix are applied.</div>
       </div>
       <div class="field" style="max-width:100%;margin-top:4px;">
-        ${fieldLabel('Text to strip from the end of the copied description', 'Text trimmed off the end of the copied Each-level description before the case suffix is added — e.g. removing a retailer name like "- Walmart" that only applied to the individual item.')}
+        ${fieldLabel('Text to strip from the end of the copied description', 'Trimmed off the end of the copied Each-level description before the case suffix is added.')}
         <input type="text" id="d_strip" value="${escapeAttr(d.stripText)}" placeholder="e.g. - Walmart">
-        <div class="hint">Removed from the end of the base description before the master case suffix is added.</div>
       </div>
       <div class="field" style="max-width:100%;">
-        ${fieldLabel('Master case description suffix', 'Appended to the cleaned description to label this as the case-level item, e.g. "Master Case (15)". {qty} is automatically replaced with each row\'s pack quantity.')}
-        <input type="text" id="d_suffix" value="${escapeAttr(d.suffixTemplate)}" placeholder="Master Case ({qty})">
+        ${isInner
+          ? `${fieldLabel('Inner case description suffix', 'Appended to the cleaned description, e.g. "Inner Pack (20)". {qty} is replaced with each row\'s inner pack quantity.')}
+             <input type="text" id="d_innerSuffix" value="${escapeAttr(d.innerSuffixTemplate)}" placeholder="Inner Pack ({qty})">`
+          : `${fieldLabel('Master case description suffix', 'Appended to the cleaned description, e.g. "Master Case (40)". {qty} is replaced with the value from your master case quantity column.')}
+             <input type="text" id="d_suffix" value="${escapeAttr(d.suffixTemplate)}" placeholder="Master Case ({qty})">`}
         <div class="hint">Use <span class="mono">{qty}</span> where the pack quantity should go. Final format: "[cleaned description] - [this suffix]". 200-character limit applies.</div>
       </div>
     </div>
@@ -339,100 +445,147 @@ function renderDefaults(){
 function buildDescription(baseDesc, qty){
   let d = String(baseDesc || '').trim();
   const stripPrefix = (state.defaults.stripPrefixText || '').trim();
-  if(stripPrefix && d.startsWith(stripPrefix)){
-    d = d.slice(stripPrefix.length).trim();
-  }
-  const strip = state.defaults.stripText.trim();
-  if(strip && d.endsWith(strip)){
-    d = d.slice(0, d.length - strip.length).trim();
-  }
-  // also handle a dash-joined trailing brand/retailer fragment loosely
-  d = d.replace(/[|\r\n]/g,' ').replace(/\s+/g,' ').trim();
-  const suffix = state.defaults.suffixTemplate.replace('{qty}', qty);
+  if(stripPrefix && d.startsWith(stripPrefix)) d = d.slice(stripPrefix.length).trim();
+  const strip = (state.defaults.stripText || '').trim();
+  if(strip && d.endsWith(strip)) d = d.slice(0, d.length - strip.length).trim();
+  d = d.replace(/[\r\n]/g,' ').replace(/\s+/g,' ').trim();
+  const tpl = state.mode==='inner' ? state.defaults.innerSuffixTemplate : state.defaults.suffixTemplate;
+  const suffix = String(tpl||'').replace('{qty}', qty);
   return `${d} - ${suffix}`.trim();
+}
+
+function cellStr(row, col){ return col ? String(row[col]==null?'':row[col]).trim() : ''; }
+function isBlankQty(v){ return v===undefined || v===null || String(v).trim()===''; }
+
+// GS1 mod-10 check digit validation for 8/12/13/14-digit GTINs
+function gtinCheckOk(raw){
+  const s = String(raw||'').replace(/\D/g,'');
+  if(![8,12,13,14].includes(s.length)) return false;
+  const digits = s.padStart(14,'0').split('').map(Number);
+  let sum = 0;
+  for(let i=0;i<13;i++) sum += digits[i] * (i%2===0 ? 3 : 1);
+  return (10 - (sum % 10)) % 10 === digits[13];
+}
+
+// (Re)computes child GTIN, GS1 quantity, description, and validation for a processed row.
+function computeRow(r){
+  const errors = [], warnings = [];
+  const d = state.defaults;
+
+  if(!r.eachGtin) errors.push('Missing base (Each) GTIN');
+  else if(!gtinCheckOk(r.eachGtin)) warnings.push('Base GTIN length or check digit looks wrong');
+
+  const srcQty = Number(r.srcQty);
+  if(isBlankQty(r.srcQty)) errors.push(state.mode==='inner' ? 'Missing inner pack quantity' : 'Missing master case quantity');
+  else if(isNaN(srcQty) || srcQty<=0 || !Number.isInteger(srcQty)) errors.push('Pack quantity is not a positive whole number');
+
+  // decide child + GS1 quantity
+  r.childGtin = r.eachGtin; r.childLevel = 'Each'; r.gs1Qty = srcQty;
+  if(state.mode==='master' && state.mapping.innerGtin){
+    if(r.innerGtin){
+      r.childGtin = r.innerGtin; r.childLevel = 'Inner';
+      if(!gtinCheckOk(r.innerGtin)) warnings.push('Inner GTIN length or check digit looks wrong');
+      if(d.masterQtyUnit==='eaches'){
+        const iq = Number(r.innerQty);
+        if(isBlankQty(r.innerQty) || isNaN(iq) || iq<=0) { errors.push('Inner case GTIN is set but inner pack quantity is missing'); r.gs1Qty = NaN; }
+        else if(!isNaN(srcQty)){
+          r.gs1Qty = srcQty / iq;
+          if(!Number.isInteger(r.gs1Qty)) errors.push(`Master qty ${srcQty} isn't a whole multiple of inner pack ${iq}`);
+        }
+      }
+    } else if(!isBlankQty(r.innerQty)){
+      errors.push('This item has an inner case but no inner GTIN yet — run Inner Case mode first, then add the GTINs to your file');
+    }
+  }
+
+  r.description = '';
+  if(r.baseDesc && !isNaN(srcQty)){
+    r.description = buildDescription(r.baseDesc, srcQty);
+    if(r.description.length>200) errors.push(`Description exceeds 200 characters (${r.description.length})`);
+  }
+  if(!r.baseDesc) errors.push('Missing description');
+  if(!d.prefix) errors.push('GS1 Company Prefix not set');
+  if(!d.brand) errors.push('Brand Name not set');
+
+  r.errors = errors; r.warnings = warnings;
+  r.status = errors.length ? 'error' : (warnings.length ? 'warn' : 'ok');
+  return r;
 }
 
 function processRows(){
   const m = state.mapping;
   const out = [];
+  let skipped = 0;
   state.rows.forEach((row, idx)=>{
-    const masterVal = m.masterGtin ? String(row[m.masterGtin]||'').trim() : '';
-    if(masterVal){ return; } // already has a master case GTIN, skip
-
-    const eachGtin = String(row[m.eachGtin]||'').trim();
-    const qtyRaw = row[m.qty];
-    const baseDesc = row[m.description];
-    const sku = m.sku ? row[m.sku] : '';
-
-    const errors = [];
-    const warnings = [];
-
-    if(!eachGtin) errors.push('Missing base (Each) GTIN');
-    else if(!/^\d{8,14}$/.test(eachGtin.replace(/\D/g,''))) warnings.push('Base GTIN has unexpected length/characters');
-
-    let qty = Number(qtyRaw);
-    if(!qtyRaw && qtyRaw !== 0) errors.push('Missing pack quantity');
-    else if(isNaN(qty) || qty<=0) errors.push('Pack quantity is not a positive number');
-
-    if(!baseDesc) errors.push('Missing description');
-
-    let description = '';
-    if(baseDesc && !isNaN(qty)){
-      description = buildDescription(baseDesc, qty);
-      if(description.length>200) errors.push(`Description exceeds 200 characters (${description.length})`);
-    }
-
-    if(!state.defaults.prefix) errors.push('GS1 Company Prefix not set');
-    if(!state.defaults.brand) errors.push('Brand Name not set');
-
-    out.push({
-      idx, sku, baseDesc, eachGtin, qty: qtyRaw, description,
-      status: errors.length ? 'error' : (warnings.length ? 'warn' : 'ok'),
-      errors, warnings, include: true
-    });
+    const doneCol = state.mode==='inner' ? m.innerGtin : m.masterGtin;
+    if(cellStr(row, doneCol)){ skipped++; return; }
+    const r = {
+      idx,
+      sku: m.sku ? row[m.sku] : '',
+      baseDesc: row[m.description],
+      eachGtin: cellStr(row, m.eachGtin),
+      srcQty: state.mode==='inner' ? row[m.innerQty] : row[m.masterQty],
+      innerGtin: state.mode==='master' ? cellStr(row, m.innerGtin) : '',
+      innerQty: m.innerQty ? row[m.innerQty] : '',
+      include: true
+    };
+    computeRow(r);
+    out.push(r);
   });
   state.processed = out;
+  state.skipped = skipped;
 }
 
 /* ---------- STEP 3: REVIEW ---------- */
-function renderReview(){
-  processRows();
+function renderReview(reprocess=true){
+  if(reprocess) processRows();
   const rows = state.processed;
+  const isInner = state.mode==='inner';
   const okCount = rows.filter(r=>r.status==='ok').length;
   const warnCount = rows.filter(r=>r.status==='warn').length;
   const errCount = rows.filter(r=>r.status==='error').length;
+  const innerLinked = rows.filter(r=>r.childLevel==='Inner').length;
 
   if(rows.length===0){
     return `
       <div class="panel">
-        <div class="empty">No rows need a master case GTIN &mdash; every row already has a value in your mapped "Master case GTIN" column, or no rows were found. Double check the column mapping in the previous step.</div>
+        <div class="empty">No rows need ${isInner?'an inner':'a master'} case GTIN &mdash; every row already has a value in your mapped "${isInner?'Inner':'Master'} case GTIN" column, or no rows were found. Double check the column mapping in the previous step.</div>
       </div>
       <div class="btn-row"><button class="btn-ghost" id="backBtn">&larr; Back</button><div></div></div>
     `;
   }
+
+  const note = isInner
+    ? `Creating <b>${MODE_LABEL.inner}</b> rows as <b>${escapeHtml(state.defaults.innerLevel)}</b>. Child = base GTIN, Quantity = inner pack size.`
+    : (state.mapping.innerGtin
+        ? `<b>${innerLinked}</b> master case${innerLinked===1?'':'s'} will contain an inner case (child = inner GTIN). The rest contain eaches directly.`
+        : `Child = base GTIN, Quantity = master case pack size. If this file has inner cases, map the inner columns in the previous step.`);
 
   return `
     <div class="readout">
       <div class="readout-cell ok"><div class="readout-num mono">${okCount}</div><div class="readout-label">Ready to export</div></div>
       <div class="readout-cell warn"><div class="readout-num mono">${warnCount}</div><div class="readout-label">Warnings</div></div>
       <div class="readout-cell error"><div class="readout-num mono">${errCount}</div><div class="readout-label">Blocked by errors</div></div>
+      <div class="readout-cell"><div class="readout-num mono">${state.skipped||0}</div><div class="readout-label">Skipped (already done)</div></div>
     </div>
+    <div class="note">${note}</div>
     <div class="panel" style="padding:0;">
       <div class="tablewrap">
         <table>
           <thead><tr>
-            <th></th><th>SKU</th><th>Description (as it will be sent)</th><th>Base GTIN</th><th>Qty</th><th>Status</th><th>Notes</th>
+            <th></th><th>SKU</th><th>Description (as it will be sent)</th><th>Child GTIN</th><th>${isInner?'Inner qty':'Case qty'}</th><th>GS1 Qty</th><th>Status</th><th>Notes</th>
           </tr></thead>
-          <tbody id="reviewBody">
+          <tbody>
             ${rows.map((r,i)=>`
               <tr class="${r.status==='error'?'row-error':(r.status==='warn'?'row-warn':'')} ${r.include?'':'row-exclude'}" data-i="${i}">
                 <td><input type="checkbox" class="inc-check" data-i="${i}" ${r.include?'checked':''}></td>
                 <td class="mono">${escapeHtml(String(r.sku||''))}</td>
                 <td>${escapeHtml(r.description || '(incomplete)')}</td>
-                <td class="mono">${escapeHtml(r.eachGtin||'')}</td>
-                <td class="editable"><input type="number" class="qty-edit" data-i="${i}" value="${escapeAttr(r.qty)}"></td>
+                <td class="mono">${escapeHtml(r.childGtin||'')}<span class="lvl">${r.childLevel}</span></td>
+                <td class="editable"><input type="number" class="qty-edit" data-i="${i}" value="${escapeAttr(r.srcQty)}"></td>
+                <td class="mono">${isNaN(r.gs1Qty)?'&mdash;':escapeHtml(String(r.gs1Qty))}</td>
                 <td><span class="status-chip ${r.status}">${r.status==='ok'?'OK':r.status==='warn'?'Warning':'Error'}</span></td>
-                <td>${[...r.errors,...r.warnings].map(m=>`<div class="msg">${escapeHtml(m)}</div>`).join('')}</td>
+                <td>${[...r.errors,...r.warnings].map(x=>`<div class="msg">${escapeHtml(x)}</div>`).join('')}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -447,18 +600,22 @@ function renderReview(){
 }
 
 /* ---------- STEP 4: EXPORT ---------- */
+function exportFileName(){ return state.mode==='inner' ? 'inner_case_import.xlsx' : 'master_case_import.xlsx'; }
 function renderExport(){
   const eligible = state.processed.filter(r=>r.include && r.status!=='error');
+  const isInner = state.mode==='inner';
   return `
     <div class="panel">
-      <h2>Export</h2>
-      <p class="desc">This produces a file formatted for GS1 US Data Hub's <b>Batch Import Products &rarr; Import Higher Levels of Packaging</b> upload (Assigned GTINs style). ${eligible.length} row${eligible.length===1?'':'s'} will be included.</p>
+      <h2>Export ${MODE_LABEL[state.mode].toLowerCase()} file</h2>
+      <p class="desc">Formatted for GS1 US Data Hub's <b>Batch Import Products &rarr; Import Higher Levels of Packaging</b> upload (Assigned GTINs style). ${eligible.length} row${eligible.length===1?'':'s'} will be included.</p>
       <div class="hint" style="margin-bottom:16px;">
-        The <span class="mono">GTIN</span> column is left blank in this file. In GS1's portal, use "Batch Import Products" &rarr; download the <b>Assigned GTINs Template</b> for ${eligible.length} product${eligible.length===1?'':'s'} &mdash; GS1 pre-fills that many reserved GTINs for you. Copy this tool's other columns into that downloaded template, in the same row order, then upload it.
+        The <span class="mono">GTIN</span> column is left blank. In GS1's portal, use "Batch Import Products" &rarr; download the <b>Assigned GTINs Template</b> for ${eligible.length} product${eligible.length===1?'':'s'} &mdash; GS1 pre-fills that many reserved GTINs. Copy this tool's other columns into that template, in the same row order, then upload it.
       </div>
       <div class="hint" style="margin-bottom:16px;">
-        <span class="mono">ChildGTINs</span> are written as 14-digit GTIN-14 values (padded with leading zeros if your source GTIN was 12 or 13 digits) &mdash; this is the format GS1's ChildGTINs field expects.
+        <span class="mono">ChildGTINs</span> are written as 14-digit GTIN-14 values (padded with leading zeros if needed).
       </div>
+      ${isInner ? `
+      <div class="note"><b>Next step for master cases:</b> once GS1 has created these inner cases, copy each assigned GTIN into your file's inner case / PDQ GTIN column (the <b>Validation Report</b> tab lists the SKUs in the same row order). Then come back, choose <b>Master Case</b> mode and map that column as "Inner case GTIN" &mdash; each master case will then contain its inner case.</div>` : ''}
       <button class="btn-accent" id="downloadBtn">Download import file (.xlsx)</button>
       <div id="downloadMsg" class="hint" style="margin-top:10px;"></div>
     </div>
@@ -471,36 +628,35 @@ function renderExport(){
 
 function toGtin14(raw){
   const digits = String(raw||'').replace(/\D/g,'');
-  if(digits.length >= 14) return digits; // already 14 (or longer/unexpected — leave as-is)
+  if(digits.length >= 14) return digits;
   return digits.padStart(14, '0');
 }
 
 function doExport(){
   const eligible = state.processed.filter(r=>r.include && r.status!=='error');
   const d = state.defaults;
+  const level = state.mode==='inner' ? d.innerLevel : 'Case';
   const headerRow = ["Action","GS1CompanyPrefix","GTIN","PackagingLevel","Description","Desc1Language","BrandName","Brand1Language","Status","Industry","IsVariable","IsPurchasable","ChildGTINs","Quantity"];
   const dataRows = eligible.map(r=>[
-    "Create", d.prefix, "", "Case", r.description, d.language, d.brand, d.language, d.status, d.industry, d.isVariable, d.isPurchasable, toGtin14(r.eachGtin), r.qty
+    "Create", d.prefix, "", level, r.description, d.language, d.brand, d.language, d.status, d.industry, d.isVariable, d.isPurchasable, toGtin14(r.childGtin), r.gs1Qty
   ]);
   const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
-  // force ChildGTINs (col M) to text so leading zeros / 14-digit values survive in Excel
   const childGtinCol = headerRow.indexOf("ChildGTINs");
   for(let r = 1; r <= dataRows.length; r++){
     const addr = XLSX.utils.encode_cell({r, c: childGtinCol});
     if(ws[addr]){ ws[addr].t = 's'; ws[addr].z = '@'; }
   }
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Master Case Import");
+  XLSX.utils.book_append_sheet(wb, ws, state.mode==='inner' ? "Inner Case Import" : "Master Case Import");
 
-  // validation report sheet (all processed rows, incl. errors, for record keeping)
-  const reportHeader = ["SKU","Description","Base GTIN","Qty","Status","Notes","Included"];
+  const reportHeader = ["SKU","Description","Base GTIN","Child GTIN","Child Level","Pack Qty (file)","GS1 Quantity","Status","Notes","Included"];
   const reportRows = state.processed.map(r=>[
-    r.sku||'', r.description||r.baseDesc||'', r.eachGtin, r.qty, r.status, [...r.errors,...r.warnings].join('; '), r.include?'Yes':'No'
+    r.sku||'', r.description||r.baseDesc||'', r.eachGtin, r.childGtin, r.childLevel, r.srcQty, isNaN(r.gs1Qty)?'':r.gs1Qty, r.status, [...r.errors,...r.warnings].join('; '), (r.include && r.status!=='error')?'Yes':'No'
   ]);
   const ws2 = XLSX.utils.aoa_to_sheet([reportHeader, ...reportRows]);
   XLSX.utils.book_append_sheet(wb, ws2, "Validation Report");
 
-  XLSX.writeFile(wb, "master_case_import.xlsx");
+  XLSX.writeFile(wb, exportFileName());
 }
 
 /* ---------- Handlers ---------- */
@@ -509,7 +665,7 @@ function attachHandlers(){
   if(backBtn) backBtn.onclick = ()=>goTo(state.step-1);
   const nextBtn = document.getElementById('nextBtn');
   if(nextBtn) nextBtn.onclick = ()=>{
-    if(state.step===2){ saveDefaults(); }
+    if(state.step===1 || state.step===2){ saveDefaults(); }
     goTo(state.step+1);
   };
   const restartBtn = document.getElementById('restartBtn');
@@ -519,6 +675,9 @@ function attachHandlers(){
   };
 
   if(state.step===0){
+    document.querySelectorAll('.mode-card').forEach(card=>{
+      card.onclick = ()=>{ state.mode = card.dataset.mode; render(); };
+    });
     const dz = document.getElementById('dropzone');
     const fi = document.getElementById('fileInput');
     dz.onclick = ()=>fi.click();
@@ -533,17 +692,19 @@ function attachHandlers(){
   }
 
   if(state.step===1){
-    ['description','eachGtin','qty','masterGtin','sku'].forEach(key=>{
+    Object.keys(state.mapping).forEach(key=>{
       const el = document.getElementById('map_'+key);
       if(el) el.onchange = e=>{ state.mapping[key]=e.target.value; render(); };
     });
+    const unit = document.getElementById('d_masterQtyUnit');
+    if(unit) unit.onchange = e=>{ state.defaults.masterQtyUnit = e.target.value; render(); };
   }
 
   if(state.step===2){
-    const map = {d_prefix:'prefix',d_brand:'brand',d_industry:'industry',d_status:'status',d_purchasable:'isPurchasable',d_variable:'isVariable',d_stripPrefix:'stripPrefixText',d_strip:'stripText',d_suffix:'suffixTemplate'};
+    const map = {d_prefix:'prefix',d_brand:'brand',d_industry:'industry',d_status:'status',d_purchasable:'isPurchasable',d_variable:'isVariable',d_stripPrefix:'stripPrefixText',d_strip:'stripText',d_suffix:'suffixTemplate',d_innerSuffix:'innerSuffixTemplate',d_innerLevel:'innerLevel'};
     Object.keys(map).forEach(id=>{
       const el = document.getElementById(id);
-      if(el) el.onchange = e=>{ state.defaults[map[id]] = e.target.value; };
+      if(el) el.oninput = el.onchange = e=>{ state.defaults[map[id]] = e.target.value; };
     });
   }
 
@@ -559,15 +720,12 @@ function attachHandlers(){
     document.querySelectorAll('.qty-edit').forEach(inp=>{
       inp.onchange = e=>{
         const i = Number(e.target.dataset.i);
-        const newQty = Number(e.target.value);
         const r = state.processed[i];
-        r.qty = newQty;
-        r.description = buildDescription(r.baseDesc, newQty);
-        r.errors = r.errors.filter(m=>!m.includes('quantity') && !m.includes('Description exceeds'));
-        if(isNaN(newQty)||newQty<=0) r.errors.push('Pack quantity is not a positive number');
-        if(r.description.length>200) r.errors.push(`Description exceeds 200 characters (${r.description.length})`);
-        r.status = r.errors.length ? 'error' : (r.warnings.length ? 'warn' : 'ok');
-        render();
+        r.srcQty = e.target.value;
+        computeRow(r);
+        // re-render without re-reading the sheet, so edits and checkboxes survive
+        document.getElementById('content').innerHTML = renderReview(false);
+        attachHandlers();
       };
     });
   }
@@ -576,7 +734,7 @@ function attachHandlers(){
     const dl = document.getElementById('downloadBtn');
     if(dl) dl.onclick = ()=>{
       doExport();
-      document.getElementById('downloadMsg').textContent = 'Downloaded master_case_import.xlsx';
+      document.getElementById('downloadMsg').textContent = 'Downloaded ' + exportFileName();
     };
   }
 }
@@ -599,20 +757,31 @@ function loadSheet(name){
   const ws = state.workbook.Sheets[name];
   const json = XLSX.utils.sheet_to_json(ws, {defval:''});
   state.rows = json;
-  state.headers = json.length ? Object.keys(json[0]) : [];
-  // try to auto-guess mapping by header keywords
-  const guess = (keywords)=>{
-    const h = state.headers.find(h=> keywords.some(k=>h.toLowerCase().includes(k)));
-    return h || '';
+  // headers in sheet column order, ignoring blank/auto "__EMPTY" columns
+  const hdr = (XLSX.utils.sheet_to_json(ws, {header:1, blankrows:false})[0] || []).map(h=>String(h==null?'':h));
+  state.headers = json.length ? Object.keys(json[0]).filter(h=>!/^__EMPTY/.test(h)) : [];
+  if(hdr.length){ state.headers.sort((a,b)=>hdr.indexOf(a)-hdr.indexOf(b)); }
+  // guess: keywords tried in priority order, each against every header
+  const guess = (keywords, avoid=[])=>{
+    for(const k of keywords){
+      const h = state.headers.find(h=>{ const l=h.toLowerCase(); return l.includes(k) && !avoid.some(a=>l.includes(a)); });
+      if(h) return h;
+    }
+    return '';
   };
-  state.mapping.description = state.mapping.description || guess(['description','desc']);
-  state.mapping.eachGtin = state.mapping.eachGtin || guess(['each gtin','base gtin','pdq gtin','gtin']);
-  state.mapping.qty = state.mapping.qty || guess(['master case configuration','pack size','pack qty','quantity','qty']);
-  state.mapping.masterGtin = state.mapping.masterGtin || guess(['master case gtin']);
-  state.mapping.sku = state.mapping.sku || guess(['sku']);
+  const m = state.mapping;
+  const valid = h => h && state.headers.includes(h) ? h : '';
+  Object.keys(m).forEach(k=>{ m[k] = valid(m[k]); });
+  m.description = m.description || guess(['description','item name','desc']);
+  m.eachGtin    = m.eachGtin    || guess(['each gtin','base gtin','upc','gtin'], ['pdq','inner','master','case']);
+  m.masterQty   = m.masterQty   || guess(['master case configuration','master case qty','master case pack','master qty','case pack','pack size','quantity','qty'], ['pdq','inner']);
+  m.masterGtin  = m.masterGtin  || guess(['master case gtin','master gtin','case gtin'], ['inner','pdq']);
+  m.innerQty    = m.innerQty    || guess(['pdq configuration','inner configuration','inner pack qty','inner pack','inner qty','pdq qty']);
+  m.innerGtin   = m.innerGtin   || guess(['pdq gtin','inner case gtin','inner gtin','inner pack gtin']);
+  m.sku         = m.sku         || guess(['sku'], ['pdq']);
 }
 
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 
 (async function init(){
